@@ -17,8 +17,14 @@ export default function GlobePage() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    // IMPROVEMENT 5 — full-screen globe, position fixed so it truly fills the viewport
-    <div style={{ position: 'fixed', inset: 0, background: '#040d14' }}>
+    // FIX 4 — relative container so globe tracks parent, not full viewport
+    <div style={{
+      position: 'relative',
+      width: '100%',
+      height: '100%',
+      overflow: 'hidden',
+      background: '#040d0a',
+    }}>
 
       {/* Globe fills the entire viewport */}
       <Globe3D arcs={arcs} cities={cities} />

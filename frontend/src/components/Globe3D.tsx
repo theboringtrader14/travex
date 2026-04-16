@@ -9,6 +9,7 @@ void MODE_COLORS  // suppress unused warning
 
 const COUNTRIES_TOPO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'
 const COUNTRIES_GEOJSON_URL = 'https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson'
+const INDIA_STATES_URL = 'https://raw.githubusercontent.com/geohacker/india/master/state/india_state.geojson'
 
 function latLngToVec3(lat: number, lng: number, radius = 1.001): THREE.Vector3 {
   const phi   = (90 - lat) * (Math.PI / 180)
@@ -27,24 +28,37 @@ const HEIGHT_FACTOR: Record<string, number> = {
   air: 0.5, train: 0.25, bus: 0.12, road: 0.12,
 }
 
-// IMPROVEMENT 2 — Emoji sprite helper
-function makeIconSprite(emoji: string, size = 64): THREE.Sprite {
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = size
-  const ctx = canvas.getContext('2d')!
-  ctx.font = `${size * 0.7}px serif`
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(emoji, size / 2, size / 2)
-  const tex = new THREE.CanvasTexture(canvas)
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
-  const sprite = new THREE.Sprite(mat)
-  sprite.scale.set(0.08, 0.08, 0.08)
-  return sprite
-}
-
-const MODE_EMOJI: Record<string, string> = {
-  air: '✈', train: '🚂', bus: '🚌', road: '🚗',
+// FIX 2 — Geometric transport icon meshes (replaces emoji sprites)
+function makeTransportMesh(mode: string): THREE.Mesh {
+  switch (mode) {
+    case 'air': {
+      const shape = new THREE.Shape()
+      shape.moveTo(0, 0.015)       // nose
+      shape.lineTo(-0.008, -0.008) // left wing
+      shape.lineTo(0, -0.004)      // tail center
+      shape.lineTo(0.008, -0.008)  // right wing
+      shape.closePath()
+      return new THREE.Mesh(
+        new THREE.ShapeGeometry(shape),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide })
+      )
+    }
+    case 'train':
+      return new THREE.Mesh(
+        new THREE.BoxGeometry(0.012, 0.006, 0.004),
+        new THREE.MeshBasicMaterial({ color: 0x2dd4bf })
+      )
+    case 'bus':
+      return new THREE.Mesh(
+        new THREE.BoxGeometry(0.014, 0.007, 0.004),
+        new THREE.MeshBasicMaterial({ color: 0x34d399 })
+      )
+    default:
+      return new THREE.Mesh(
+        new THREE.SphereGeometry(0.008, 6, 6),
+        new THREE.MeshBasicMaterial({ color: 0xFFB300 })
+      )
+  }
 }
 
 // Atmosphere shaders
@@ -88,7 +102,6 @@ function addCountryLines(topo: Topology, group: THREE.Group): void {
   console.log('[Globe] country lines added (TopoJSON):', count)
 }
 
-// IMPROVEMENT 4 — addGeoJsonLines now accepts explicit color/opacity params
 function addGeoJsonLines(
   geoJson: { features: Array<{ geometry: { type: string; coordinates: unknown } }> },
   group: THREE.Group,
@@ -140,22 +153,30 @@ interface Props {
 }
 
 export default function Globe3D({ arcs, cities }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const latRef    = useRef<HTMLSpanElement>(null)
-  const lngRef    = useRef<HTMLSpanElement>(null)
+  // FIX 5 — mount div ref instead of canvas ref
+  const mountRef = useRef<HTMLDivElement>(null)
+  const latRef   = useRef<HTMLSpanElement>(null)
+  const lngRef   = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const container = mountRef.current
+    if (!container) return
 
-    const W = canvas.offsetWidth  || 800
-    const H = canvas.offsetHeight || 600
+    const W = container.clientWidth  || 800
+    const H = container.clientHeight || 600
     const R = 1
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
+    // FIX 5 — renderer appended to container div
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(W, H)
     renderer.setClearColor(0x000000, 0)
+    renderer.domElement.style.position = 'absolute'
+    renderer.domElement.style.top = '0'
+    renderer.domElement.style.left = '0'
+    renderer.domElement.style.width = '100%'
+    renderer.domElement.style.height = '100%'
+    container.appendChild(renderer.domElement)
 
     const scene  = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 100)
@@ -205,9 +226,7 @@ export default function Globe3D({ arcs, cities }: Props) {
           .catch(e => console.error('[Globe] Both CDN sources failed:', e))
       })
 
-    // IMPROVEMENT 4 — India state boundaries
-    const INDIA_STATES_URL = 'https://cdn.jsdelivr.net/npm/india-geojson@0.1.0/india.json'
-
+    // FIX 1 — India state boundaries (updated URL, no fallback boxes)
     fetch(INDIA_STATES_URL)
       .then(r => {
         if (!r.ok) throw new Error(`India states fetch failed: ${r.status}`)
@@ -223,23 +242,7 @@ export default function Globe3D({ arcs, cities }: Props) {
         }
       })
       .catch(() => {
-        const INDIA_APPROX: [number, number, number, number][] = [
-          [68, 8, 78, 18],
-          [72, 18, 80, 26],
-          [76, 26, 88, 34],
-          [88, 20, 95, 28],
-          [70, 22, 76, 28],
-        ]
-        const boxMat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.15 })
-        INDIA_APPROX.forEach(([w, s, e, n]) => {
-          const corners = [
-            latLngToVec3(s, w, 1.001), latLngToVec3(n, w, 1.001),
-            latLngToVec3(n, e, 1.001), latLngToVec3(s, e, 1.001),
-            latLngToVec3(s, w, 1.001),
-          ]
-          globeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(corners), boxMat))
-        })
-        console.log('[Globe] India states: CDN failed, using approximate boxes')
+        console.warn('[Globe] India states CDN failed — skipping state boundaries')
       })
 
     // 5. Atmosphere glow
@@ -282,11 +285,12 @@ export default function Globe3D({ arcs, cities }: Props) {
     })))
 
     // 8. Travel arcs — added to globeGroup (rotate with globe)
-    // IMPROVEMENT 2 — dot is now THREE.Sprite instead of THREE.Mesh
+    // FIX 2 — dot is THREE.Mesh; curve stored on arc for tangent orientation
     interface ArcObject {
-      tube: THREE.Mesh
-      dot:  THREE.Sprite
-      points: THREE.Vector3[]
+      tube:     THREE.Mesh
+      dot:      THREE.Mesh
+      curve:    THREE.QuadraticBezierCurve3
+      points:   THREE.Vector3[]
       progress: number
       delay:    number
       speed:    number
@@ -311,26 +315,26 @@ export default function Globe3D({ arcs, cities }: Props) {
       tube.visible = false
       globeGroup.add(tube)
 
-      // IMPROVEMENT 2 — train dashed track lines
+      // Train dashed track lines
       if (arc.mode === 'train') {
         const dashMat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.3 })
         for (let d = 5; d < pts.length - 5; d += 8) {
           const p = pts[d]
-          const dir = pts[d + 1].clone().sub(pts[d - 1]).normalize()
-          const perp = new THREE.Vector3(-dir.z, 0, dir.x).normalize().multiplyScalar(0.025)
+          const dir2 = pts[d + 1].clone().sub(pts[d - 1]).normalize()
+          const perp = new THREE.Vector3(-dir2.z, 0, dir2.x).normalize().multiplyScalar(0.025)
           const dashPts = [p.clone().add(perp), p.clone().sub(perp)]
           globeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(dashPts), dashMat))
         }
       }
 
-      // IMPROVEMENT 2 — emoji sprite instead of sphere dot
-      const dot = makeIconSprite(MODE_EMOJI[arc.mode] ?? '●')
+      // FIX 2 — geometric transport mesh instead of emoji sprite
+      const dot = makeTransportMesh(arc.mode)
       globeGroup.add(dot)
 
-      // IMPROVEMENT 3 — staggered starts + slower speed
       return {
         tube,
         dot,
+        curve,
         points: pts,
         progress: (i * 0.3) % 1.0,
         delay: i * 0.4,
@@ -339,30 +343,42 @@ export default function Globe3D({ arcs, cities }: Props) {
     })
 
     // 9. City markers — children of globeGroup
-    interface CityNode { ring: THREE.Mesh; dot: THREE.Mesh }
-    const cityNodes: CityNode[] = cities.map((city) => {
-      const pos = latLngToVec3(city.lat, city.lng, R * 1.002)
+    // FIX 3 — cleanup helper + isCityMarker userData
+    const addCityMarkers = () => {
+      // Remove stale city markers before re-adding
+      const toRemove: THREE.Object3D[] = []
+      globeGroup.traverse(obj => { if (obj.userData['isCityMarker']) toRemove.push(obj) })
+      toRemove.forEach(obj => globeGroup.remove(obj))
 
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.012, 0.018, 16),
-        new THREE.MeshBasicMaterial({
-          color: 0x2dd4bf, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
-        })
-      )
-      ring.position.copy(pos)
-      ring.lookAt(pos.clone().multiplyScalar(2))
-      globeGroup.add(ring)
+      interface CityNode { ring: THREE.Mesh; dot: THREE.Mesh }
+      const nodes: CityNode[] = cities.map((city) => {
+        const pos = latLngToVec3(city.lat, city.lng, R * 1.002)
 
-      const dotM = new THREE.Mesh(
-        new THREE.SphereGeometry(0.008, 8, 8),
-        new THREE.MeshBasicMaterial({ color: 0x2dd4bf })
-      )
-      dotM.position.copy(pos)
-      globeGroup.add(dotM)
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(0.012, 0.018, 16),
+          new THREE.MeshBasicMaterial({
+            color: 0x2dd4bf, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
+          })
+        )
+        ring.position.copy(pos)
+        ring.lookAt(pos.clone().multiplyScalar(2))
+        ring.userData['isCityMarker'] = true
+        globeGroup.add(ring)
 
-      return { ring, dot: dotM }
-    })
-    console.log('[Globe] city markers added:', cities.length)
+        const dotM = new THREE.Mesh(
+          new THREE.SphereGeometry(0.008, 8, 8),
+          new THREE.MeshBasicMaterial({ color: 0x2dd4bf })
+        )
+        dotM.position.copy(pos)
+        dotM.userData['isCityMarker'] = true
+        globeGroup.add(dotM)
+
+        return { ring, dot: dotM }
+      })
+      console.log('[Globe] city markers added:', cities.length)
+      return nodes
+    }
+    const cityNodes = addCityMarkers()
 
     // Drag
     let rotY = 0, rotX = 0
@@ -375,7 +391,8 @@ export default function Globe3D({ arcs, cities }: Props) {
       lastX = e.clientX; lastY = e.clientY
     }
     const onMouseUp = () => { isDragging = false }
-    canvas.addEventListener('mousedown', onMouseDown)
+    // FIX 5 — attach mousedown to domElement
+    renderer.domElement.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup',   onMouseUp)
 
@@ -387,7 +404,6 @@ export default function Globe3D({ arcs, cities }: Props) {
       animId = requestAnimationFrame(animate)
       const elapsed = clock.getElapsedTime()
 
-      // IMPROVEMENT 1 — rotation slowed by 50% (0.06 → 0.03)
       globeGroup.rotation.y = elapsed * 0.03 + rotY
       globeGroup.rotation.x = rotX
 
@@ -398,6 +414,13 @@ export default function Globe3D({ arcs, cities }: Props) {
         arc.progress = (arc.progress + arc.speed) % 1
         const idx = Math.floor(arc.progress * (arc.points.length - 1))
         arc.dot.position.copy(arc.points[idx])
+
+        // FIX 2 — orient transport icon along arc tangent
+        const tangent = arc.curve.getTangent(arc.progress)
+        arc.dot.quaternion.setFromUnitVectors(
+          new THREE.Vector3(0, 1, 0),
+          tangent.clone().normalize()
+        )
       })
 
       // City marker pulse (scale)
@@ -417,28 +440,29 @@ export default function Globe3D({ arcs, cities }: Props) {
     }
     animate()
 
-    // Resize
+    // FIX 5 — ResizeObserver observes container div
     const resizeObs = new ResizeObserver(() => {
-      const w = canvas.offsetWidth, h = canvas.offsetHeight
+      const w = container.clientWidth
+      const h = container.clientHeight
       if (w === 0 || h === 0) return
       renderer.setSize(w, h)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
     })
-    resizeObs.observe(canvas)
+    resizeObs.observe(container)
 
     return () => {
       cancelAnimationFrame(animId)
       resizeObs.disconnect()
-      canvas.removeEventListener('mousedown', onMouseDown)
+      // FIX 5 — remove listener from domElement; FIX 2 — Sprite removed from traverse
+      renderer.domElement.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup',   onMouseUp)
       scene.traverse((obj) => {
         if (
           obj instanceof THREE.Mesh ||
           obj instanceof THREE.Line ||
-          obj instanceof THREE.Points ||
-          obj instanceof THREE.Sprite
+          obj instanceof THREE.Points
         ) {
           if ('geometry' in obj && obj.geometry) obj.geometry.dispose()
           const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
@@ -446,13 +470,17 @@ export default function Globe3D({ arcs, cities }: Props) {
         }
       })
       renderer.dispose()
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement)
+      }
     }
   }, [arcs, cities])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <canvas
-        ref={canvasRef}
+      {/* FIX 5 — mount div; renderer.domElement appended here */}
+      <div
+        ref={mountRef}
         style={{
           position: 'absolute', inset: 0,
           width: '100%', height: '100%',
