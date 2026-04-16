@@ -27,6 +27,26 @@ const HEIGHT_FACTOR: Record<string, number> = {
   air: 0.5, train: 0.25, bus: 0.12, road: 0.12,
 }
 
+// IMPROVEMENT 2 — Emoji sprite helper
+function makeIconSprite(emoji: string, size = 64): THREE.Sprite {
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  ctx.font = `${size * 0.7}px serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(emoji, size / 2, size / 2)
+  const tex = new THREE.CanvasTexture(canvas)
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
+  const sprite = new THREE.Sprite(mat)
+  sprite.scale.set(0.08, 0.08, 0.08)
+  return sprite
+}
+
+const MODE_EMOJI: Record<string, string> = {
+  air: '✈', train: '🚂', bus: '🚌', road: '🚗',
+}
+
 // Atmosphere shaders
 const ATMO_VERT = `
   varying vec3 vNormal;
@@ -68,11 +88,14 @@ function addCountryLines(topo: Topology, group: THREE.Group): void {
   console.log('[Globe] country lines added (TopoJSON):', count)
 }
 
+// IMPROVEMENT 4 — addGeoJsonLines now accepts explicit color/opacity params
 function addGeoJsonLines(
   geoJson: { features: Array<{ geometry: { type: string; coordinates: unknown } }> },
-  group: THREE.Group
+  group: THREE.Group,
+  color: number = 0x2dd4bf,
+  opacity: number = 0.4
 ): void {
-  const mat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.4 })
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity })
   let count = 0
   geoJson.features.forEach(feature => {
     const geom = feature.geometry
@@ -92,7 +115,7 @@ function addGeoJsonLines(
       })
     })
   })
-  console.log('[Globe] country lines added (GeoJSON fallback):', count)
+  console.log('[Globe] lines added (GeoJSON):', count)
 }
 
 function addGridLines(group: THREE.Group): void {
@@ -178,8 +201,45 @@ export default function Globe3D({ arcs, cities }: Props) {
             console.log('[Globe] GeoJSON fallback fetch: 200 OK')
             return r.json()
           })
-          .then(data => addGeoJsonLines(data, globeGroup))
+          .then(data => addGeoJsonLines(data, globeGroup, 0x2dd4bf, 0.4))
           .catch(e => console.error('[Globe] Both CDN sources failed:', e))
+      })
+
+    // IMPROVEMENT 4 — India state boundaries
+    const INDIA_STATES_URL = 'https://cdn.jsdelivr.net/npm/india-geojson@0.1.0/india.json'
+
+    fetch(INDIA_STATES_URL)
+      .then(r => {
+        if (!r.ok) throw new Error(`India states fetch failed: ${r.status}`)
+        return r.json()
+      })
+      .then(data => {
+        const features = data.features || (data.type === 'Feature' ? [data] : [])
+        if (features.length > 0) {
+          addGeoJsonLines(data, globeGroup, 0x2dd4bf, 0.2)
+          console.log('[Globe] India state lines added:', features.length, 'features')
+        } else {
+          throw new Error('No features found')
+        }
+      })
+      .catch(() => {
+        const INDIA_APPROX: [number, number, number, number][] = [
+          [68, 8, 78, 18],
+          [72, 18, 80, 26],
+          [76, 26, 88, 34],
+          [88, 20, 95, 28],
+          [70, 22, 76, 28],
+        ]
+        const boxMat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.15 })
+        INDIA_APPROX.forEach(([w, s, e, n]) => {
+          const corners = [
+            latLngToVec3(s, w, 1.001), latLngToVec3(n, w, 1.001),
+            latLngToVec3(n, e, 1.001), latLngToVec3(s, e, 1.001),
+            latLngToVec3(s, w, 1.001),
+          ]
+          globeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(corners), boxMat))
+        })
+        console.log('[Globe] India states: CDN failed, using approximate boxes')
       })
 
     // 5. Atmosphere glow
@@ -222,9 +282,10 @@ export default function Globe3D({ arcs, cities }: Props) {
     })))
 
     // 8. Travel arcs — added to globeGroup (rotate with globe)
+    // IMPROVEMENT 2 — dot is now THREE.Sprite instead of THREE.Mesh
     interface ArcObject {
       tube: THREE.Mesh
-      dot:  THREE.Mesh
+      dot:  THREE.Sprite
       points: THREE.Vector3[]
       progress: number
       delay:    number
@@ -250,13 +311,31 @@ export default function Globe3D({ arcs, cities }: Props) {
       tube.visible = false
       globeGroup.add(tube)
 
-      const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(0.012, 8, 8),
-        new THREE.MeshBasicMaterial({ color: MODE_HEX[arc.mode] ?? 0xffffff })
-      )
+      // IMPROVEMENT 2 — train dashed track lines
+      if (arc.mode === 'train') {
+        const dashMat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.3 })
+        for (let d = 5; d < pts.length - 5; d += 8) {
+          const p = pts[d]
+          const dir = pts[d + 1].clone().sub(pts[d - 1]).normalize()
+          const perp = new THREE.Vector3(-dir.z, 0, dir.x).normalize().multiplyScalar(0.025)
+          const dashPts = [p.clone().add(perp), p.clone().sub(perp)]
+          globeGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(dashPts), dashMat))
+        }
+      }
+
+      // IMPROVEMENT 2 — emoji sprite instead of sphere dot
+      const dot = makeIconSprite(MODE_EMOJI[arc.mode] ?? '●')
       globeGroup.add(dot)
 
-      return { tube, dot, points: pts, progress: Math.random(), delay: i * 0.4, speed: 0.004 + Math.random() * 0.003 }
+      // IMPROVEMENT 3 — staggered starts + slower speed
+      return {
+        tube,
+        dot,
+        points: pts,
+        progress: (i * 0.3) % 1.0,
+        delay: i * 0.4,
+        speed: 0.0015 + Math.random() * 0.001,
+      }
     })
 
     // 9. City markers — children of globeGroup
@@ -308,7 +387,8 @@ export default function Globe3D({ arcs, cities }: Props) {
       animId = requestAnimationFrame(animate)
       const elapsed = clock.getElapsedTime()
 
-      globeGroup.rotation.y = elapsed * 0.06 + rotY
+      // IMPROVEMENT 1 — rotation slowed by 50% (0.06 → 0.03)
+      globeGroup.rotation.y = elapsed * 0.03 + rotY
       globeGroup.rotation.x = rotX
 
       // Arc traveller dots
@@ -357,9 +437,10 @@ export default function Globe3D({ arcs, cities }: Props) {
         if (
           obj instanceof THREE.Mesh ||
           obj instanceof THREE.Line ||
-          obj instanceof THREE.Points
+          obj instanceof THREE.Points ||
+          obj instanceof THREE.Sprite
         ) {
-          obj.geometry.dispose()
+          if ('geometry' in obj && obj.geometry) obj.geometry.dispose()
           const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
           mats.forEach((m: THREE.Material) => m.dispose())
         }

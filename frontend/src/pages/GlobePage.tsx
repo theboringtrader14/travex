@@ -2,14 +2,12 @@ import { useEffect } from 'react'
 import Globe3D from '../components/Globe3D'
 import StatCard from '../components/StatCard'
 import ModeBars from '../components/ModeBars'
-import TripCard from '../components/TripCard'
-import AiBuddyCard from '../components/AiBuddyCard'
 import { useStore } from '../store'
 import { tripsAPI, citiesAPI, statsAPI } from '../services/api'
-import { COLORS, FONTS } from '../tokens'
+import { FONTS } from '../tokens'
 
 export default function GlobePage() {
-  const { trips, cities, stats, arcs, setTrips, setCities, setStats, setArcs } = useStore()
+  const { cities, stats, arcs, setTrips, setCities, setStats, setArcs } = useStore()
 
   useEffect(() => {
     citiesAPI.list().then(r => setCities(r.data)).catch(() => {})
@@ -18,22 +16,22 @@ export default function GlobePage() {
     tripsAPI.list({ limit: 5 }).then(r => setTrips(r.data.trips)).catch(() => {})
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const recentTrips = stats?.recent_trips ?? trips.slice(0, 5)
-
   return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: '220px 1fr 240px',
-      flex: 1,
-      overflow: 'hidden',
-      height: '100%',
-    }}>
+    // IMPROVEMENT 5 — full-screen globe, position fixed so it truly fills the viewport
+    <div style={{ position: 'fixed', inset: 0, background: '#040d14' }}>
 
-      {/* Left panel — Stats */}
+      {/* Globe fills the entire viewport */}
+      <Globe3D arcs={arcs} cities={cities} />
+
+      {/* Bottom-left overlay — stat cards */}
       <div style={{
-        padding: '20px 16px',
-        overflowY: 'auto',
-        borderRight: `1px solid ${COLORS.border}`,
+        position: 'absolute',
+        bottom: 52,   // leave room above the coord HUD
+        left: 20,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        width: 200,
         animation: 'fadeUp 0.6s ease',
       }}>
         <StatCard
@@ -51,37 +49,26 @@ export default function GlobePage() {
           value={stats ? `₹${(stats.lifetime_spend_inr / 100000).toFixed(1)}L` : '—'}
           sub="travel spend"
         />
-        <div style={{ marginTop: 20 }}>
-          <ModeBars
-            byMode={stats?.by_mode ?? {}}
-            totalTrips={stats?.total_trips ?? 0}
-          />
-        </div>
       </div>
 
-      {/* Center — Globe */}
-      <div style={{ position: 'relative', overflow: 'hidden' }}>
-        <Globe3D arcs={arcs} cities={cities} />
-      </div>
-
-      {/* Right panel — Recent trips */}
+      {/* Bottom-right overlay — mode legend / transport bars */}
       <div style={{
-        borderLeft: `1px solid ${COLORS.border}`,
-        overflowY: 'auto',
+        position: 'absolute',
+        bottom: 52,
+        right: 20,
+        width: 200,
+        padding: '14px 16px',
+        background: 'rgba(4,20,16,0.82)',
+        border: '1px solid rgba(45,212,191,0.12)',
+        borderRadius: 12,
+        backdropFilter: 'blur(12px)',
+        fontFamily: FONTS.mono,
         animation: 'fadeUp 0.6s ease',
       }}>
-        <div style={{
-          padding: '16px 16px 8px',
-          fontFamily: FONTS.mono, fontSize: 10,
-          color: COLORS.muted,
-          textTransform: 'uppercase', letterSpacing: '0.08em',
-        }}>
-          Recent Trips
-        </div>
-        {recentTrips.map(t => <TripCard key={t.id} trip={t} compact />)}
-        <div style={{ padding: '0 12px' }}>
-          <AiBuddyCard />
-        </div>
+        <ModeBars
+          byMode={stats?.by_mode ?? {}}
+          totalTrips={stats?.total_trips ?? 0}
+        />
       </div>
     </div>
   )
