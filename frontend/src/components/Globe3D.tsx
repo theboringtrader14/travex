@@ -7,7 +7,8 @@ import { MODE_COLORS } from '../tokens'
 
 void MODE_COLORS  // suppress unused warning
 
-const COUNTRIES_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'
+const COUNTRIES_TOPO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'
+const COUNTRIES_GEOJSON_URL = 'https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson'
 
 function latLngToVec3(lat: number, lng: number, radius = 1.001): THREE.Vector3 {
   const phi   = (90 - lat) * (Math.PI / 180)
@@ -46,6 +47,7 @@ const ATMO_FRAG = `
 function addCountryLines(topo: Topology, group: THREE.Group): void {
   const countries = topojson.feature(topo, topo.objects['countries'] as GeometryCollection)
   const mat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.4 })
+  let count = 0
   countries.features.forEach(feature => {
     if (!feature.geometry) return
     const coords: number[][][][] =
@@ -59,9 +61,38 @@ function addCountryLines(topo: Topology, group: THREE.Group): void {
         const pts = (ring as [number, number][]).map(([lng, lat]) => latLngToVec3(lat, lng, 1.001))
         if (pts.length < 2) return
         group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
+        count++
       })
     })
   })
+  console.log('[Globe] country lines added (TopoJSON):', count)
+}
+
+function addGeoJsonLines(
+  geoJson: { features: Array<{ geometry: { type: string; coordinates: unknown } }> },
+  group: THREE.Group
+): void {
+  const mat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.4 })
+  let count = 0
+  geoJson.features.forEach(feature => {
+    const geom = feature.geometry
+    if (!geom) return
+    const polys: number[][][][] =
+      geom.type === 'Polygon'
+        ? [geom.coordinates as number[][][]]
+        : geom.type === 'MultiPolygon'
+        ? geom.coordinates as number[][][][]
+        : []
+    polys.forEach(poly => {
+      poly.forEach(ring => {
+        const pts = (ring as [number, number][]).map(([lng, lat]) => latLngToVec3(lat, lng, 1.001))
+        if (pts.length < 2) return
+        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
+        count++
+      })
+    })
+  })
+  console.log('[Globe] country lines added (GeoJSON fallback):', count)
 }
 
 function addGridLines(group: THREE.Group): void {
@@ -131,11 +162,25 @@ export default function Globe3D({ arcs, cities }: Props) {
     // 3. Grid lines
     addGridLines(globeGroup)
 
-    // 4. Country outlines (async fetch)
-    fetch(COUNTRIES_URL)
-      .then(r => r.json())
+    // 4. Country outlines (async fetch — TopoJSON CDN, fall back to GeoJSON)
+    fetch(COUNTRIES_TOPO_URL)
+      .then(r => {
+        if (!r.ok) throw new Error(`TopoJSON fetch failed: ${r.status}`)
+        console.log('[Globe] TopoJSON CDN fetch: 200 OK')
+        return r.json()
+      })
       .then((topo: Topology) => addCountryLines(topo, globeGroup))
-      .catch(() => {/* silently fail */})
+      .catch((err) => {
+        console.warn('[Globe] TopoJSON CDN failed, trying GeoJSON fallback:', err)
+        fetch(COUNTRIES_GEOJSON_URL)
+          .then(r => {
+            if (!r.ok) throw new Error(`GeoJSON fetch failed: ${r.status}`)
+            console.log('[Globe] GeoJSON fallback fetch: 200 OK')
+            return r.json()
+          })
+          .then(data => addGeoJsonLines(data, globeGroup))
+          .catch(e => console.error('[Globe] Both CDN sources failed:', e))
+      })
 
     // 5. Atmosphere glow
     scene.add(new THREE.Mesh(
@@ -238,6 +283,7 @@ export default function Globe3D({ arcs, cities }: Props) {
 
       return { ring, dot: dotM }
     })
+    console.log('[Globe] city markers added:', cities.length)
 
     // Drag
     let rotY = 0, rotX = 0
