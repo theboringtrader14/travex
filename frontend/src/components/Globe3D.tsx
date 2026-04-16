@@ -1,67 +1,32 @@
 import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
+import * as topojson from 'topojson-client'
+import type { Topology, GeometryCollection } from 'topojson-specification'
 import type { ArcDef, CityRead } from '../services/api'
 import { MODE_COLORS } from '../tokens'
 
-interface Props {
-  arcs:   ArcDef[]
-  cities: CityRead[]
-}
+void MODE_COLORS  // suppress unused warning
 
-// Outside component — pure helper
-function latLngToVec3(lat: number, lng: number, r: number): THREE.Vector3 {
-  const phi   = (90 - lat) * Math.PI / 180
-  const theta = (lng + 180) * Math.PI / 180
+const COUNTRIES_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'
+
+function latLngToVec3(lat: number, lng: number, radius = 1.001): THREE.Vector3 {
+  const phi   = (90 - lat) * (Math.PI / 180)
+  const theta = (lng + 180) * (Math.PI / 180)
   return new THREE.Vector3(
-    -r * Math.sin(phi) * Math.cos(theta),
-     r * Math.cos(phi),
-     r * Math.sin(phi) * Math.sin(theta)
+    -radius * Math.sin(phi) * Math.cos(theta),
+     radius * Math.cos(phi),
+     radius * Math.sin(phi) * Math.sin(theta)
   )
 }
 
 const MODE_HEX: Record<string, number> = {
-  air:   0x38bdf8,
-  train: 0x2dd4bf,
-  bus:   0x34d399,
-  road:  0xFFB300,
+  air: 0x38bdf8, train: 0x2dd4bf, bus: 0x34d399, road: 0xFFB300,
 }
-
 const HEIGHT_FACTOR: Record<string, number> = {
-  air: 0.45, train: 0.22, bus: 0.12, road: 0.12,
+  air: 0.5, train: 0.25, bus: 0.12, road: 0.12,
 }
 
-// Vertex shader from reference HTML
-const GLOBE_VERT = `
-  uniform float time;
-  varying vec3 vNormal;
-  varying vec3 vPos;
-  void main() {
-    vNormal = normalize(normalMatrix * normal);
-    vPos = position;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`
-
-// Fragment shader from reference HTML
-const GLOBE_FRAG = `
-  uniform float time;
-  uniform vec3 colorA;
-  uniform vec3 colorB;
-  uniform vec3 colorC;
-  varying vec3 vNormal;
-  varying vec3 vPos;
-  void main() {
-    float lat = vPos.y;
-    float fresnel = pow(1.0 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.5);
-    vec3 base = mix(colorB, colorA, lat * 0.5 + 0.5);
-    base = mix(colorC, base, 0.7);
-    vec3 rim = colorA * 0.6;
-    vec3 col = mix(base, rim, fresnel * 0.8);
-    gl_FragColor = vec4(col, 0.92);
-  }
-`
-
-// Atmosphere vertex shader
+// Atmosphere shaders
 const ATMO_VERT = `
   varying vec3 vNormal;
   void main() {
@@ -69,21 +34,56 @@ const ATMO_VERT = `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
-
-// Atmosphere fragment shader
 const ATMO_FRAG = `
-  uniform vec3 colorA;
-  uniform vec3 colorB;
   varying vec3 vNormal;
   void main() {
-    float intensity = pow(0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 4.0);
-    vec3 col = mix(colorA, colorB, intensity);
-    gl_FragColor = vec4(col, intensity * 0.55);
+    float intensity = pow(0.8 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+    vec3 col = mix(vec3(0.0, 0.58, 0.80), vec3(0.22, 0.83, 0.75), intensity);
+    gl_FragColor = vec4(col, intensity * 0.6);
   }
 `
 
-// Suppress unused import warning for MODE_COLORS (used via MODE_HEX)
-void MODE_COLORS
+function addCountryLines(topo: Topology, group: THREE.Group): void {
+  const countries = topojson.feature(topo, topo.objects['countries'] as GeometryCollection)
+  const mat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.4 })
+  countries.features.forEach(feature => {
+    if (!feature.geometry) return
+    const coords: number[][][][] =
+      feature.geometry.type === 'Polygon'
+        ? [feature.geometry.coordinates as number[][][]]
+        : feature.geometry.type === 'MultiPolygon'
+        ? feature.geometry.coordinates as number[][][][]
+        : []
+    coords.forEach(poly => {
+      poly.forEach(ring => {
+        const pts = (ring as [number, number][]).map(([lng, lat]) => latLngToVec3(lat, lng, 1.001))
+        if (pts.length < 2) return
+        group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
+      })
+    })
+  })
+}
+
+function addGridLines(group: THREE.Group): void {
+  const mat = new THREE.LineBasicMaterial({ color: 0x2dd4bf, transparent: true, opacity: 0.06 })
+  // Latitude lines
+  for (let lat = -75; lat <= 75; lat += 15) {
+    const pts: THREE.Vector3[] = []
+    for (let lng = -180; lng <= 180; lng += 3) pts.push(latLngToVec3(lat, lng, 1.001))
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
+  }
+  // Longitude lines
+  for (let lng = -180; lng < 180; lng += 15) {
+    const pts: THREE.Vector3[] = []
+    for (let lat = -90; lat <= 90; lat += 3) pts.push(latLngToVec3(lat, lng, 1.001))
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat))
+  }
+}
+
+interface Props {
+  arcs: ArcDef[]
+  cities: CityRead[]
+}
 
 export default function Globe3D({ arcs, cities }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -94,69 +94,73 @@ export default function Globe3D({ arcs, cities }: Props) {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const W = canvas.offsetWidth || 800
+    const W = canvas.offsetWidth  || 800
     const H = canvas.offsetHeight || 600
     const R = 1
 
-    // Renderer
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(W, H)
     renderer.setClearColor(0x000000, 0)
 
-    // Scene + Camera
-    const scene = new THREE.Scene()
+    const scene  = new THREE.Scene()
     const camera = new THREE.PerspectiveCamera(42, W / H, 0.1, 100)
     camera.position.set(0, 0.3, 2.8)
     camera.lookAt(0, 0, 0)
 
-    // Globe mesh
-    const globeMat = new THREE.ShaderMaterial({
-      uniforms: {
-        time:   { value: 0 },
-        colorA: { value: new THREE.Color(0x0891b2) },
-        colorB: { value: new THREE.Color(0x065f46) },
-        colorC: { value: new THREE.Color(0x040d0a) },
-      },
-      vertexShader:   GLOBE_VERT,
-      fragmentShader: GLOBE_FRAG,
-      transparent: true,
-    })
-    const globe = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 64), globeMat)
-    scene.add(globe)
+    // Globe group — all surface elements rotate together
+    const globeGroup = new THREE.Group()
+    scene.add(globeGroup)
 
-    // Atmosphere
-    const atmoMat = new THREE.ShaderMaterial({
-      uniforms: {
-        colorA: { value: new THREE.Color(0x2dd4bf) },
-        colorB: { value: new THREE.Color(0x38bdf8) },
-      },
-      vertexShader:   ATMO_VERT,
-      fragmentShader: ATMO_FRAG,
-      side:        THREE.BackSide,
-      transparent: true,
-      blending:    THREE.AdditiveBlending,
-      depthWrite:  false,
-    })
-    scene.add(new THREE.Mesh(new THREE.SphereGeometry(R * 1.08, 64, 64), atmoMat))
-
-    // Wireframe
-    scene.add(new THREE.Mesh(
-      new THREE.SphereGeometry(R * 1.001, 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0x2dd4bf, wireframe: true, transparent: true, opacity: 0.06 })
+    // 1. Dark base sphere
+    globeGroup.add(new THREE.Mesh(
+      new THREE.SphereGeometry(R, 64, 64),
+      new THREE.MeshPhongMaterial({
+        color:    0x040d14,
+        emissive: new THREE.Color(0x020a10),
+        emissiveIntensity: 1.0,
+      })
     ))
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0x2dd4bf, 0.3))
-    const dir = new THREE.DirectionalLight(0x38bdf8, 0.8)
-    dir.position.set(3, 2, 4)
-    scene.add(dir)
-    const rim = new THREE.DirectionalLight(0x34d399, 0.4)
-    rim.position.set(-3, -1, -2)
-    scene.add(rim)
+    // 2. Wireframe overlay (subtle)
+    globeGroup.add(new THREE.Mesh(
+      new THREE.SphereGeometry(R * 1.0005, 24, 16),
+      new THREE.MeshBasicMaterial({ color: 0x2dd4bf, wireframe: true, transparent: true, opacity: 0.02 })
+    ))
 
-    // Stars
-    const sCnt = 1200
+    // 3. Grid lines
+    addGridLines(globeGroup)
+
+    // 4. Country outlines (async fetch)
+    fetch(COUNTRIES_URL)
+      .then(r => r.json())
+      .then((topo: Topology) => addCountryLines(topo, globeGroup))
+      .catch(() => {/* silently fail */})
+
+    // 5. Atmosphere glow
+    scene.add(new THREE.Mesh(
+      new THREE.SphereGeometry(R * 1.15, 64, 64),
+      new THREE.ShaderMaterial({
+        vertexShader:   ATMO_VERT,
+        fragmentShader: ATMO_FRAG,
+        side:        THREE.BackSide,
+        transparent: true,
+        blending:    THREE.AdditiveBlending,
+        depthWrite:  false,
+      })
+    ))
+
+    // 6. Lighting
+    scene.add(new THREE.AmbientLight(0x0a1628, 0.4))
+    const dir = new THREE.DirectionalLight(0x38bdf8, 0.6)
+    dir.position.set(5, 3, 5)
+    scene.add(dir)
+    const pt = new THREE.PointLight(0x2dd4bf, 0.3, 10)
+    pt.position.set(-3, -2, -3)
+    scene.add(pt)
+
+    // 7. Stars
+    const sCnt = 1500
     const sPos = new Float32Array(sCnt * 3)
     for (let i = 0; i < sCnt; i++) {
       const r = 8 + Math.random() * 12
@@ -172,14 +176,14 @@ export default function Globe3D({ arcs, cities }: Props) {
       color: 0xffffff, size: 0.025, transparent: true, opacity: 0.5,
     })))
 
-    // Build arcs
+    // 8. Travel arcs — added to globeGroup (rotate with globe)
     interface ArcObject {
-      line:    THREE.Line
-      points:  THREE.Vector3[]
-      dot:     THREE.Mesh
+      tube: THREE.Mesh
+      dot:  THREE.Mesh
+      points: THREE.Vector3[]
       progress: number
-      delay:   number
-      speed:   number
+      delay:    number
+      speed:    number
     }
     const arcObjects: ArcObject[] = arcs.map((arc, i) => {
       const p1  = latLngToVec3(arc.from.lat, arc.from.lng, R)
@@ -191,75 +195,61 @@ export default function Globe3D({ arcs, cities }: Props) {
 
       const curve = new THREE.QuadraticBezierCurve3(p1, mid, p2)
       const pts   = curve.getPoints(80)
-      const geo   = new THREE.BufferGeometry().setFromPoints(pts)
-      const mat   = new THREE.LineBasicMaterial({
-        color: MODE_HEX[arc.mode] ?? 0xffffff,
-        transparent: true,
-        opacity: 0.85,
-      })
-      const line  = new THREE.Line(geo, mat)
-      line.visible = false
-      scene.add(line)
+      const tube  = new THREE.Mesh(
+        new THREE.TubeGeometry(curve, 60, 0.004, 4, false),
+        new THREE.MeshBasicMaterial({
+          color: MODE_HEX[arc.mode] ?? 0xffffff,
+          transparent: true, opacity: 0.85,
+        })
+      )
+      tube.visible = false
+      globeGroup.add(tube)
 
       const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(0.018, 8, 8),
+        new THREE.SphereGeometry(0.012, 8, 8),
         new THREE.MeshBasicMaterial({ color: MODE_HEX[arc.mode] ?? 0xffffff })
       )
-      scene.add(dot)
+      globeGroup.add(dot)
 
-      return {
-        line,
-        points:   pts,
-        dot,
-        progress: Math.random(),
-        delay:    i * 0.4,
-        speed:    0.004 + Math.random() * 0.003,
-      }
+      return { tube, dot, points: pts, progress: Math.random(), delay: i * 0.4, speed: 0.004 + Math.random() * 0.003 }
     })
 
-    // Build city markers
-    interface CityNode { ring: THREE.Mesh; dot: THREE.Mesh; pos: THREE.Vector3 }
+    // 9. City markers — children of globeGroup
+    interface CityNode { ring: THREE.Mesh; dot: THREE.Mesh }
     const cityNodes: CityNode[] = cities.map((city) => {
-      const pos = latLngToVec3(city.lat, city.lng, R)
+      const pos = latLngToVec3(city.lat, city.lng, R * 1.002)
 
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.028, 0.036, 16),
+        new THREE.RingGeometry(0.012, 0.018, 16),
         new THREE.MeshBasicMaterial({
-          color: 0x2dd4bf, transparent: true, opacity: 0.8, side: THREE.DoubleSide,
+          color: 0x2dd4bf, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
         })
       )
       ring.position.copy(pos)
       ring.lookAt(pos.clone().multiplyScalar(2))
-      scene.add(ring)
+      globeGroup.add(ring)
 
       const dotM = new THREE.Mesh(
-        new THREE.SphereGeometry(0.014, 8, 8),
+        new THREE.SphereGeometry(0.008, 8, 8),
         new THREE.MeshBasicMaterial({ color: 0x2dd4bf })
       )
       dotM.position.copy(pos)
-      scene.add(dotM)
+      globeGroup.add(dotM)
 
-      return { ring, dot: dotM, pos }
+      return { ring, dot: dotM }
     })
 
-    // Drag state
+    // Drag
     let rotY = 0, rotX = 0
     let isDragging = false, lastX = 0, lastY = 0
-
-    const onMouseDown = (e: MouseEvent) => {
-      isDragging = true
-      lastX = e.clientX
-      lastY = e.clientY
-    }
+    const onMouseDown = (e: MouseEvent) => { isDragging = true; lastX = e.clientX; lastY = e.clientY }
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging) return
       rotY += (e.clientX - lastX) * 0.005
       rotX  = Math.max(-0.8, Math.min(0.8, rotX + (e.clientY - lastY) * 0.005))
-      lastX = e.clientX
-      lastY = e.clientY
+      lastX = e.clientX; lastY = e.clientY
     }
     const onMouseUp = () => { isDragging = false }
-
     canvas.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup',   onMouseUp)
@@ -272,33 +262,26 @@ export default function Globe3D({ arcs, cities }: Props) {
       animId = requestAnimationFrame(animate)
       const elapsed = clock.getElapsedTime()
 
-      globeMat.uniforms.time.value = elapsed
-      globe.rotation.y = elapsed * 0.06 + rotY
-      globe.rotation.x = rotX
+      globeGroup.rotation.y = elapsed * 0.06 + rotY
+      globeGroup.rotation.x = rotX
 
-      // Arcs + traveller dots
+      // Arc traveller dots
       arcObjects.forEach((arc) => {
         if (elapsed < arc.delay) return
-        if (!arc.line.visible) arc.line.visible = true
+        if (!arc.tube.visible) arc.tube.visible = true
         arc.progress = (arc.progress + arc.speed) % 1
         const idx = Math.floor(arc.progress * (arc.points.length - 1))
-        const wp  = arc.points[idx].clone().applyEuler(globe.rotation)
-        arc.dot.position.copy(wp)
-        arc.line.rotation.copy(globe.rotation)
+        arc.dot.position.copy(arc.points[idx])
       })
 
-      // City markers
+      // City marker pulse (scale)
       cityNodes.forEach((n, i) => {
-        const pulse = 0.85 + 0.15 * Math.sin(elapsed * 2 + i * 0.7)
-        n.ring.scale.setScalar(pulse)
-        ;(n.ring.material as THREE.MeshBasicMaterial).opacity = 0.5 + 0.3 * Math.sin(elapsed * 1.5 + i)
-        const bp = n.pos.clone().applyEuler(globe.rotation)
-        n.ring.position.copy(bp)
-        n.ring.lookAt(bp.clone().multiplyScalar(2))
-        n.dot.position.copy(bp)
+        const s = 0.9 + 0.1 * Math.sin(elapsed * 2 + i * 0.7)
+        n.ring.scale.setScalar(s)
+        n.dot.scale.setScalar(s)
       })
 
-      // HUD update via DOM refs — no React setState to avoid re-renders
+      // HUD
       const lat = (Math.sin(elapsed * 0.1) * 28.6).toFixed(2)
       const lng = (Math.cos(elapsed * 0.08) * 77.2).toFixed(2)
       if (latRef.current) latRef.current.textContent = `${lat}°N`
@@ -332,7 +315,7 @@ export default function Globe3D({ arcs, cities }: Props) {
         ) {
           obj.geometry.dispose()
           const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
-          mats.forEach(m => m.dispose())
+          mats.forEach((m: THREE.Material) => m.dispose())
         }
       })
       renderer.dispose()

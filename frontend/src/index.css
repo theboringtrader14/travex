@@ -9,7 +9,7 @@
   --border: rgba(45, 212, 191, 0.12);
   --glow:   rgba(45, 212, 191, 0.06);
   --text:   #c8ede7;
-  --muted:  rgba(45, 212, 191, 0.35);
+  --muted:  rgba(45, 212, 191, 0.55);
 }
 
 *, *::before, *::after {
