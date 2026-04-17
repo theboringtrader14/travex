@@ -124,19 +124,38 @@ MUM → PNQ  train  2026-01-29  ₹320
 - SphereGeometry(1.08, 64, 64) for atmosphere (BackSide)
 - SphereGeometry(1.001, 24, 16) wireframe at opacity 0.06
 
-### Arcs
+### Country / State Boundaries (updated 2026-04-16)
+- **Country outlines:** TopoJSON via CDN (world-atlas@2 + topojson-client) — 286 lines loaded ✅
+- **India state boundaries:** CDN (geohacker/india) at opacity 0.2; `.catch()` is silent warn — no fallback boxes
+- **Removed:** India approximate bounding-box fallback (was causing unwanted viewfinder marks on India)
+- Debug log: `[Globe] TopoJSON CDN fetch: 200 OK`, country line count, city marker count
+- Grid lines: 15° lat/lng, opacity 0.06
+
+### Arcs (updated 2026-04-16)
 - QuadraticBezierCurve3 with 80 points
 - Height factors: air 0.45, train 0.22, bus 0.12, road 0.12
 - Arc colour: air #38bdf8, train #2dd4bf, bus #34d399, road #FFB300
 - Traveller dot: SphereGeometry(0.018) in matching mode colour
-- Lines visible=false until elapsed >= arc.delay (i * 0.4s stagger)
+- Traveller speed: `progress += 0.0015 + random*0.001` (reduced from 0.003)
+- Staggered starts: `(i * 0.3) % 1.0`
+- Lines visible=false until elapsed >= arc.delay
 
-### City Markers
+### Transport Icons (updated 2026-04-16 — replaces emoji sprites)
+- `makeTransportMesh(mode)` factory function — all geometric Three.js shapes
+- **Air:** ShapeGeometry diamond (rotated square)
+- **Train:** BoxGeometry (narrow box)
+- **Bus:** BoxGeometry (wider box)
+- Icons oriented along arc tangent: `quaternion.setFromUnitVectors(forward, tangent)`
+- Train arcs get dashed crosshatch track lines (LineSegments)
+
+### City Markers (updated 2026-04-16)
 - RingGeometry(0.028, 0.036, 16) with DoubleSide material
 - SphereGeometry(0.014) inner dot, both teal #2dd4bf
+- `userData['isCityMarker'] = true` — used for selective cleanup on re-render
 - Pulse animation: scale 0.85 + 0.15 * sin(elapsed * 2 + i * 0.7)
 - Opacity: 0.5 + 0.3 * sin(elapsed * 1.5 + i)
 - Both ring and dot re-positioned each frame to follow globe rotation
+- **Race condition fix:** cities array added to `useEffect` dependency list
 
 ### Stars
 - 1200 points scattered at radius 8-20
@@ -145,7 +164,12 @@ MUM → PNQ  train  2026-01-29  ₹320
 ### Mouse Interaction
 - Drag-to-rotate: mousedown/mousemove/mouseup
 - rotX clamped to [-0.8, 0.8]
-- Auto-rotation: elapsed * 0.06 + rotY
+- Auto-rotation: `elapsed * 0.03` (reduced from 0.06 — half speed)
+
+### Layout (updated 2026-04-16)
+- GlobePage: `position: relative; height: 100%` (was `position: fixed`) — fills content area without overlapping topbar
+- Renderer mounted to `mountRef` div via `renderer.domElement` append
+- ResizeObserver on container div (not `window.resize`)
 
 ### HUD Update
 - DOM refs (latRef, lngRef) updated inside animation loop — NO React setState
@@ -153,6 +177,7 @@ MUM → PNQ  train  2026-01-29  ₹320
 
 ### Cleanup
 - All THREE.Mesh/Line/Points geometry + materials disposed on unmount
+- `userData['isCityMarker']` selective cleanup on re-render
 - renderer.dispose() called
 - ResizeObserver disconnected
 - Event listeners removed
@@ -167,13 +192,16 @@ teal:   #2dd4bf  — primary brand, train mode
 forest: #34d399  — bus mode, positive/green
 deep:   #040d0a  — background
 text:   #c8ede7  — body text
-muted:  rgba(45,212,191,0.35)  — labels, secondary
+muted:  rgba(45,212,191,0.60)  — labels, secondary  [was 0.35, updated 2026-04-16]
 glass:  rgba(4, 20, 16, 0.75)  — card background
 border: rgba(45, 212, 191, 0.12)  — card borders
 glow:   rgba(45, 212, 191, 0.06)  — ambient glow
+surface: rgba(14, 18, 24, 0.9)   — elevated surface
 ```
 
-Gradient: `linear-gradient(135deg, #38bdf8, #2dd4bf, #34d399)`
+Gradient: `linear-gradient(135deg, #38bdf8, #2dd4bf, #34d399)` — ONLY LIFEX module with gradient accent
+
+Arc colors: air `#38bdf8`, train `#2dd4bf`, bus `#34d399`, road `#FFB300`
 
 ---
 
@@ -193,14 +221,25 @@ Gradient: `linear-gradient(135deg, #38bdf8, #2dd4bf, #34d399)`
 
 ## Phase 2 Enhancements (Planned)
 
+### Automated Trip Capture
+- **Gmail sync:** Parse travel confirmation emails (IndiGo, Air India, SpiceJet, IRCTC) → auto-create trips via Gmail MCP + Gemma 4. App in the Air style full ticket import.
+- **IRCTC SMS parsing:** Train booking SMS → auto-create train trips via BUDGEX SMS pipeline
+- **FlightAware free tier:** Live flight status tracking
+
+### AI & Finance
+- **Travel Buddy AI:** Deeper FINEX/BUDGEX integration for proactive budget suggestions
 - **Gemma 4 AI integration:** Real-time travel buddy with BUDGEX cross-reference
 - **BUDGEX budget import:** Live monthly budget from BUDGEX API → Topbar chip
-- **SMS trip parse:** WhatsApp/SMS booking confirmation → auto-log trip
+
+### UI / UX
 - **Trip detail page:** Full trip view with map, cost breakdown, notes editor
-- **Export:** CSV export of trip log
 - **Timeline bar:** Bottom timeline component (months/years scrollable)
 - **Touch support:** Mobile swipe-to-rotate on globe canvas
-- **Domain:** travex.lifexos.co.in Nginx/Caddy proxy setup
+- **Export:** CSV export of trip log
+
+### Infrastructure
+- **Domain:** travex.lifexos.co.in + travex-api.lifexos.co.in — DNS A records pending; certbot SSL after propagation
+- **EC2 deployed:** ✅ Port 8004, systemd service active (since 2026-04-16)
 
 ---
 
@@ -267,4 +306,4 @@ travex/
 
 ---
 
-*Created: 2026-04-16 | Version: 1.0.0*
+*Created: 2026-04-16 | Version: 1.1.0 | Last updated: 2026-04-16 (evening — Globe3D rebuild, EC2 deploy)*
