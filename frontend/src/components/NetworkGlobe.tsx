@@ -70,9 +70,17 @@ export function NetworkGlobe({
       .then(r => r.json())
       .then((topo: Topology) => {
         const land = topojson.feature(topo, topo.objects['countries'] as GeometryCollection)
-        setHexPolygons(land.features)
+        const features = (land.features as object[]).filter((f: object) => {
+          const feat = f as { geometry?: { coordinates: unknown } }
+          if (!feat.geometry) return false
+          // Skip Antarctica and extreme southern polygons
+          const coordStr = JSON.stringify(feat.geometry.coordinates)
+          if (coordStr.includes('-8') && (coordStr.includes('-80') || coordStr.includes('-85') || coordStr.includes('-90'))) return false
+          return true
+        })
+        setHexPolygons(features)
       })
-      .catch(() => {/* silently degrade if offline */})
+      .catch(() => {/* degrade silently */})
   }, [])
 
   // ── Globe setup: auto-rotate, disable zoom, initial altitude ─────────────
@@ -143,7 +151,7 @@ export function NetworkGlobe({
 
         // ── Dotted hex-polygon continents ────────────────────────────────
         hexPolygonsData={hexPolygons}
-        hexPolygonResolution={3}
+        hexPolygonResolution={2}
         hexPolygonMargin={0.38}
         hexPolygonUseDots={true}
         hexPolygonColor={() => 'rgba(45,212,191,0.40)'}
