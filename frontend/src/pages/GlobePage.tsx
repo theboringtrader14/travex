@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import Globe3D from '../components/Globe3D'
+import { useEffect, useState } from 'react'
+import { NetworkGlobe } from '../components/NetworkGlobe'
 import StatCard from '../components/StatCard'
 import ModeBars from '../components/ModeBars'
 import { useStore } from '../store'
@@ -8,6 +8,13 @@ import { FONTS } from '../tokens'
 
 export default function GlobePage() {
   const { cities, stats, arcs, setTrips, setCities, setStats, setArcs } = useStore()
+  const [dims, setDims] = useState({ w: window.innerWidth, h: window.innerHeight })
+
+  useEffect(() => {
+    const onResize = () => setDims({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
 
   useEffect(() => {
     citiesAPI.list().then(r => setCities(r.data)).catch(() => {})
@@ -27,7 +34,20 @@ export default function GlobePage() {
     }}>
 
       {/* Globe fills the entire viewport */}
-      <Globe3D arcs={arcs} cities={cities} />
+      <div style={{ position: 'absolute', inset: 0 }}>
+        <NetworkGlobe
+          cities={cities}
+          arcs={arcs}
+          width={dims.w}
+          height={dims.h}
+          arcColor="#2dd4bf"
+          arcWidth={0.6}
+          arcGlow={13}
+          arcDensity={100}
+          citySize={1.0}
+          pulseSpeed={3.4}
+        />
+      </div>
 
       {/* Bottom-left overlay — stat cards */}
       <div style={{

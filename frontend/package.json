@@ -14,8 +14,9 @@
     "lucide-react": "^0.439.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-globe.gl": "^2.37.1",
     "react-router-dom": "^6.26.0",
-    "three": "^0.167.0",
+    "three": "^0.183.2",
     "topojson-client": "^3.1.0",
     "zustand": "^4.5.4"
   },
